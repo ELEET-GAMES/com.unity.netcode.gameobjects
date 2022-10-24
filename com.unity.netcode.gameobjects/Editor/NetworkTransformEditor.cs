@@ -23,7 +23,9 @@ namespace Unity.Netcode.Editor
         private SerializedProperty m_RotAngleThresholdProperty;
         private SerializedProperty m_ScaleThresholdProperty;
         private SerializedProperty m_InLocalSpaceProperty;
-        private SerializedProperty m_InterpolateProperty;
+        private SerializedProperty m_InterpolatePropertyPosition;
+        private SerializedProperty m_InterpolatePropertyRotation;
+        private SerializedProperty m_InterpolatePropertyScale;
 
         private static int s_ToggleOffset = 45;
         private static float s_MaxRowWidth = EditorGUIUtility.labelWidth + EditorGUIUtility.fieldWidth + 5;
@@ -47,7 +49,9 @@ namespace Unity.Netcode.Editor
             m_RotAngleThresholdProperty = serializedObject.FindProperty(nameof(NetworkTransform.RotAngleThreshold));
             m_ScaleThresholdProperty = serializedObject.FindProperty(nameof(NetworkTransform.ScaleThreshold));
             m_InLocalSpaceProperty = serializedObject.FindProperty(nameof(NetworkTransform.InLocalSpace));
-            m_InterpolateProperty = serializedObject.FindProperty(nameof(NetworkTransform.Interpolate));
+            m_InterpolatePropertyPosition = serializedObject.FindProperty(nameof(NetworkTransform.InterpolatePosition));
+            m_InterpolatePropertyRotation = serializedObject.FindProperty(nameof(NetworkTransform.InterpolateRotation));
+            m_InterpolatePropertyScale = serializedObject.FindProperty(nameof(NetworkTransform.InterpolateScale));
         }
 
         /// <inheritdoc/>
@@ -111,11 +115,12 @@ namespace Unity.Netcode.Editor
             EditorGUILayout.PropertyField(m_PositionThresholdProperty);
             EditorGUILayout.PropertyField(m_RotAngleThresholdProperty);
             EditorGUILayout.PropertyField(m_ScaleThresholdProperty);
-
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Configurations", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(m_InLocalSpaceProperty);
-            EditorGUILayout.PropertyField(m_InterpolateProperty);
+            EditorGUILayout.PropertyField(m_InterpolatePropertyPosition);
+            EditorGUILayout.PropertyField(m_InterpolatePropertyRotation);
+            EditorGUILayout.PropertyField(m_InterpolatePropertyScale);
 
 #if COM_UNITY_MODULES_PHYSICS
             // if rigidbody is present but network rigidbody is not present

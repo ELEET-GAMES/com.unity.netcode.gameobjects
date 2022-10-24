@@ -385,7 +385,15 @@ namespace Unity.Netcode.Components
         /// <summary>
         /// When enabled (default) interpolation is applied and when disabled no interpolation is applied
         /// </summary>
-        public bool Interpolate = true;
+        public bool InterpolatePosition = true;
+        public bool InterpolateRotation = true;
+        public bool InterpolateScale = true;
+
+	public bool Interpolate {
+	    get {
+                return InterpolatePosition || InterpolateRotation || InterpolateScale;
+            }
+	}
 
         /// <summary>
         /// Used to determine who can write to this transform. Server only for this transform.
@@ -673,34 +681,33 @@ namespace Unity.Netcode.Components
             // We always apply the interpolated state for any axis we are synchronizing even when the state has no deltas
             // to assure we fully interpolate to our target even after we stop extrapolating 1 tick later.
             var useInterpolatedValue = !networkState.IsTeleportingNextFrame && Interpolate;
-            if (useInterpolatedValue)
-            {
+
+	    if(useInterpolatedValue && InterpolatePosition) {
                 if (SyncPositionX) { adjustedPosition.x = m_PositionXInterpolator.GetInterpolatedValue(); }
                 if (SyncPositionY) { adjustedPosition.y = m_PositionYInterpolator.GetInterpolatedValue(); }
                 if (SyncPositionZ) { adjustedPosition.z = m_PositionZInterpolator.GetInterpolatedValue(); }
-
-                if (SyncScaleX) { adjustedScale.x = m_ScaleXInterpolator.GetInterpolatedValue(); }
-                if (SyncScaleY) { adjustedScale.y = m_ScaleYInterpolator.GetInterpolatedValue(); }
-                if (SyncScaleZ) { adjustedScale.z = m_ScaleZInterpolator.GetInterpolatedValue(); }
-
-                if (SynchronizeRotation)
-                {
-                    var interpolatedEulerAngles = m_RotationInterpolator.GetInterpolatedValue().eulerAngles;
-                    if (SyncRotAngleX) { adjustedRotAngles.x = interpolatedEulerAngles.x; }
-                    if (SyncRotAngleY) { adjustedRotAngles.y = interpolatedEulerAngles.y; }
-                    if (SyncRotAngleZ) { adjustedRotAngles.z = interpolatedEulerAngles.z; }
-                }
-            }
-            else
-            {
+	    } else {
                 if (networkState.HasPositionX) { adjustedPosition.x = networkState.PositionX; }
                 if (networkState.HasPositionY) { adjustedPosition.y = networkState.PositionY; }
                 if (networkState.HasPositionZ) { adjustedPosition.z = networkState.PositionZ; }
+        }
 
+	    if(useInterpolatedValue && InterpolateScale) {
+ 	        if (SyncScaleX) { adjustedScale.x = m_ScaleXInterpolator.GetInterpolatedValue(); }
+                if (SyncScaleY) { adjustedScale.y = m_ScaleYInterpolator.GetInterpolatedValue(); }
+                if (SyncScaleZ) { adjustedScale.z = m_ScaleZInterpolator.GetInterpolatedValue(); }
+	    } else {
                 if (networkState.HasScaleX) { adjustedScale.x = networkState.ScaleX; }
                 if (networkState.HasScaleY) { adjustedScale.y = networkState.ScaleY; }
                 if (networkState.HasScaleZ) { adjustedScale.z = networkState.ScaleZ; }
+            }
 
+	    if(useInterpolatedValue && InterpolateRotation) {
+                var interpolatedEulerAngles = m_RotationInterpolator.GetInterpolatedValue().eulerAngles;
+                if (SyncRotAngleX) { adjustedRotAngles.x = interpolatedEulerAngles.x; }
+                if (SyncRotAngleY) { adjustedRotAngles.y = interpolatedEulerAngles.y; }
+                if (SyncRotAngleZ) { adjustedRotAngles.z = interpolatedEulerAngles.z; }
+            } else {
                 if (networkState.HasRotAngleX) { adjustedRotAngles.x = networkState.RotAngleX; }
                 if (networkState.HasRotAngleY) { adjustedRotAngles.y = networkState.RotAngleY; }
                 if (networkState.HasRotAngleZ) { adjustedRotAngles.z = networkState.RotAngleZ; }
