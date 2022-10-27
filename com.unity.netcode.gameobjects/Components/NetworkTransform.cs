@@ -240,22 +240,6 @@ namespace Unity.Netcode.Components
                     serializer.SerializeValue(ref PositionY);
                 }
 
-                if (HasPositionZ)
-                {
-                    serializer.SerializeValue(ref PositionZ);
-                }
-
-                // RotAngle Values
-                if (HasRotAngleX)
-                {
-                    serializer.SerializeValue(ref RotAngleX);
-                }
-
-                if (HasRotAngleY)
-                {
-                    serializer.SerializeValue(ref RotAngleY);
-                }
-
                 if (HasRotAngleZ)
                 {
                     serializer.SerializeValue(ref RotAngleZ);
@@ -270,11 +254,6 @@ namespace Unity.Netcode.Components
                 if (HasScaleY)
                 {
                     serializer.SerializeValue(ref ScaleY);
-                }
-
-                if (HasScaleZ)
-                {
-                    serializer.SerializeValue(ref ScaleZ);
                 }
 
                 // Only if we are receiving state
