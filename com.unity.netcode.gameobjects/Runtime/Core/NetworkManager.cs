@@ -1341,6 +1341,7 @@ namespace Unity.Netcode
         private void DisconnectRemoteClient(ulong clientId)
         {
             var transportId = ClientIdToTransportId(clientId);
+            MessagingSystem.ProcessSendQueues();
             NetworkConfig.NetworkTransport.DisconnectRemoteClient(transportId);
         }
 
@@ -1821,6 +1822,10 @@ namespace Unity.Netcode
                         NetworkLog.LogInfo($"Disconnect Event From {clientId}");
                     }
 
+                    // Process the incoming message queue so that we get everything from the server disconnecting us
+                    // or, if we are the server, so we got everything from that client.
+                    MessagingSystem.ProcessIncomingMessageQueue();
+
                     OnClientDisconnectCallback?.Invoke(clientId);
 
                     if (IsServer)
@@ -2137,10 +2142,10 @@ namespace Unity.Netcode
                     // Generate a SceneObject for the player object to spawn
                     var sceneObject = new NetworkObject.SceneObject
                     {
+                        OwnerClientId = ownerClientId,
                         Header = new NetworkObject.SceneObject.HeaderData
                         {
                             IsPlayerObject = true,
-                            OwnerClientId = ownerClientId,
                             IsSceneObject = false,
                             HasTransform = true,
                             Hash = playerPrefabHash,
@@ -2257,7 +2262,7 @@ namespace Unity.Netcode
                 message.ObjectInfo.Header.IsSceneObject = false;
                 message.ObjectInfo.Header.HasParent = false;
                 message.ObjectInfo.Header.IsPlayerObject = true;
-                message.ObjectInfo.Header.OwnerClientId = clientId;
+                message.ObjectInfo.OwnerClientId = clientId;
                 var size = SendMessage(ref message, NetworkDelivery.ReliableFragmentedSequenced, clientPair.Key);
                 NetworkMetrics.TrackObjectSpawnSent(clientPair.Key, ConnectedClients[clientId].PlayerObject, size);
             }

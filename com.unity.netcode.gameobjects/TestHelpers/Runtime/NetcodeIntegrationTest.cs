@@ -444,6 +444,8 @@ namespace Unity.Netcode.TestHelpers.Runtime
             }
         }
 
+        protected virtual bool LogAllMessages => false;
+
         /// <summary>
         /// This starts the server and clients as long as <see cref="CanStartServerAndClients"/>
         /// returns true.
@@ -460,6 +462,11 @@ namespace Unity.Netcode.TestHelpers.Runtime
                 {
                     Debug.LogError("Failed to start instances");
                     Assert.Fail("Failed to start instances");
+                }
+
+                if (LogAllMessages)
+                {
+                    EnableMessageLogging();
                 }
 
                 RegisterSceneManagerHandler();
@@ -689,6 +696,18 @@ namespace Unity.Netcode.TestHelpers.Runtime
                     // Destroy the GameObject that holds the NetworkObject component
                     Object.DestroyImmediate(networkObject.gameObject);
                 }
+            }
+        }
+
+        /// <summary>
+        /// For debugging purposes, this will turn on verbose logging of all messages and batches sent and received
+        /// </summary>
+        protected void EnableMessageLogging()
+        {
+            m_ServerNetworkManager.MessagingSystem.Hook(new DebugNetworkHooks());
+            foreach (var client in m_ClientNetworkManagers)
+            {
+                client.MessagingSystem.Hook(new DebugNetworkHooks());
             }
         }
 
