@@ -1340,10 +1340,10 @@ namespace Unity.Netcode
             {
                 obj.HasParent = true;
                 obj.ParentObjectId = parentNetworkObject.NetworkObjectId;
-                obj.Header.WorldPositionStays = m_CachedWorldPositionStays;
+                obj.WorldPositionStays = m_CachedWorldPositionStays;
                 var latestParent = GetNetworkParenting();
                 var isLatestParentSet = latestParent != null && latestParent.HasValue;
-                obj.Header.IsLatestParentSet = isLatestParentSet;
+                obj.IsLatestParentSet = isLatestParentSet;
                 if (isLatestParentSet)
                 {
                     obj.LatestParent = latestParent.Value;
