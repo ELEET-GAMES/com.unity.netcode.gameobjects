@@ -2,11 +2,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using Unity.Netcode;
+using Unity.Netcode.TestHelpers.Runtime;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
-using Unity.Netcode;
-using Unity.Netcode.TestHelpers.Runtime;
 
 namespace TestProject.RuntimeTests
 {
@@ -89,7 +89,7 @@ namespace TestProject.RuntimeTests
                     {
                         var matchedClient = m_ClientNetworkManagers.Where(c => c.LocalClientId == sceneEvent.ClientId);
                         Assert.True(matchedClient.Count() > 0, $"Found no client {nameof(NetworkManager)}s that had a {nameof(NetworkManager.LocalClientId)} of {sceneEvent.ClientId}");
-                        Assert.AreEqual(matchedClient.First().SceneManager.ClientSynchronizationMode, m_LoadSceneMode);
+                        Assert.AreEqual(matchedClient.First().SceneManager.ClientSynchronizationMode, m_ServerNetworkManager.SceneManager.ClientSynchronizationMode);
                         break;
                     }
             }

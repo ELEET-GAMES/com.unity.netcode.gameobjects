@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
@@ -41,7 +42,7 @@ namespace Unity.Netcode
             {
                 Writer = new FastBufferWriter(writerSize, writerAllocator, maxWriterSize);
                 NetworkDelivery = delivery;
-                BatchHeader = default;
+                BatchHeader = new BatchHeader { Magic = BatchHeader.MagicValue };
             }
         }
 
@@ -56,6 +57,8 @@ namespace Unity.Netcode
 
         private Dictionary<Type, uint> m_MessageTypes = new Dictionary<Type, uint>();
         private Dictionary<ulong, NativeList<SendQueueItem>> m_SendQueues = new Dictionary<ulong, NativeList<SendQueueItem>>();
+
+        private HashSet<ulong> m_DisconnectedClients = new HashSet<ulong>();
 
         // This is m_PerClientMessageVersion[clientId][messageType] = version
         private Dictionary<ulong, Dictionary<Type, int>> m_PerClientMessageVersions = new Dictionary<ulong, Dictionary<Type, int>>();
@@ -154,8 +157,9 @@ namespace Unity.Netcode
             // from the queue.
             foreach (var kvp in m_SendQueues)
             {
-                CleanupDisconnectedClient(kvp.Key);
+                ClientDisconnected(kvp.Key);
             }
+            CleanupDisconnectedClients();
 
             for (var queueIndex = 0; queueIndex < m_IncomingMessageQueue.Length; ++queueIndex)
             {
@@ -204,6 +208,30 @@ namespace Unity.Netcode
             return m_LocalVersions[messageType];
         }
 
+        /// <summary>
+        /// Invoked by <see cref="NetworkConnectionManager.NetworkUpdate"/>
+        /// </summary>
+        /// <remarks>
+        /// This requires a specific order of operations where <see cref="NetworkConnectionManager.OnEarlyUpdate"/> is
+        /// invoked prior to this method.
+        /// </remarks>
+        internal void OnEarlyUpdate()
+        {
+            ProcessIncomingMessageQueue();
+            CleanupDisconnectedClients();
+        }
+
+        internal static string ByteArrayToString(byte[] ba, int offset, int count)
+        {
+            var hex = new StringBuilder(ba.Length * 2);
+            for (int i = offset; i < offset + count; ++i)
+            {
+                hex.AppendFormat("{0:x2} ", ba[i]);
+            }
+
+            return hex.ToString();
+        }
+
         internal void HandleIncomingData(ulong clientId, ArraySegment<byte> data, float receiveTime)
         {
             unsafe
@@ -214,18 +242,38 @@ namespace Unity.Netcode
                         new FastBufferReader(nativeData + data.Offset, Allocator.None, data.Count);
                     if (!batchReader.TryBeginRead(sizeof(BatchHeader)))
                     {
-                        NetworkLog.LogWarning("Received a packet too small to contain a BatchHeader. Ignoring it.");
+                        NetworkLog.LogError("Received a packet too small to contain a BatchHeader. Ignoring it.");
                         return;
                     }
 
                     batchReader.ReadValue(out BatchHeader batchHeader);
 
-                    for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
+                    if (batchHeader.Magic != BatchHeader.MagicValue)
                     {
-                        m_Hooks[hookIdx].OnBeforeReceiveBatch(clientId, batchHeader.BatchSize, batchReader.Length);
+                        NetworkLog.LogError($"Received a packet with an invalid Magic Value. Please report this to the Netcode for GameObjects team at https://github.com/Unity-Technologies/com.unity.netcode.gameobjects/issues and include the following data: Offset: {data.Offset}, Size: {data.Count}, Full receive array: {ByteArrayToString(data.Array, 0, data.Array.Length)}");
+                        return;
                     }
 
-                    for (var messageIdx = 0; messageIdx < batchHeader.BatchSize; ++messageIdx)
+                    if (batchHeader.BatchSize != data.Count)
+                    {
+                        NetworkLog.LogError($"Received a packet with an invalid Batch Size Value. Please report this to the Netcode for GameObjects team at https://github.com/Unity-Technologies/com.unity.netcode.gameobjects/issues and include the following data: Offset: {data.Offset}, Size: {data.Count}, Expected Size: {batchHeader.BatchSize}, Full receive array: {ByteArrayToString(data.Array, 0, data.Array.Length)}");
+                        return;
+                    }
+
+                    var hash = XXHash.Hash64(batchReader.GetUnsafePtrAtCurrentPosition(), batchReader.Length - batchReader.Position);
+
+                    if (hash != batchHeader.BatchHash)
+                    {
+                        NetworkLog.LogError($"Received a packet with an invalid Hash Value. Please report this to the Netcode for GameObjects team at https://github.com/Unity-Technologies/com.unity.netcode.gameobjects/issues and include the following data: Received Hash: {batchHeader.BatchHash}, Calculated Hash: {hash}, Offset: {data.Offset}, Size: {data.Count}, Full receive array: {ByteArrayToString(data.Array, 0, data.Array.Length)}");
+                        return;
+                    }
+
+                    for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
+                    {
+                        m_Hooks[hookIdx].OnBeforeReceiveBatch(clientId, batchHeader.BatchCount, batchReader.Length);
+                    }
+
+                    for (var messageIdx = 0; messageIdx < batchHeader.BatchCount; ++messageIdx)
                     {
 
                         var messageHeader = new MessageHeader();
@@ -237,7 +285,7 @@ namespace Unity.Netcode
                         }
                         catch (OverflowException)
                         {
-                            NetworkLog.LogWarning("Received a batch that didn't have enough data for all of its batches, ending early!");
+                            NetworkLog.LogError("Received a batch that didn't have enough data for all of its batches, ending early!");
                             throw;
                         }
 
@@ -245,7 +293,7 @@ namespace Unity.Netcode
 
                         if (!batchReader.TryBeginRead((int)messageHeader.MessageSize))
                         {
-                            NetworkLog.LogWarning("Received a message that claimed a size larger than the packet, ending early!");
+                            NetworkLog.LogError("Received a message that claimed a size larger than the packet, ending early!");
                             return;
                         }
                         m_IncomingMessageQueue.Add(new ReceiveQueueItem
@@ -263,7 +311,7 @@ namespace Unity.Netcode
                     }
                     for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
                     {
-                        m_Hooks[hookIdx].OnAfterReceiveBatch(clientId, batchHeader.BatchSize, batchReader.Length);
+                        m_Hooks[hookIdx].OnAfterReceiveBatch(clientId, batchHeader.BatchCount, batchReader.Length);
                     }
                 }
             }
@@ -333,37 +381,35 @@ namespace Unity.Netcode
 
         public void HandleMessage(in MessageHeader header, FastBufferReader reader, ulong senderId, float timestamp, int serializedHeaderSize)
         {
-            if (header.MessageType >= m_HighMessageType)
-            {
-                Debug.LogWarning($"Received a message with invalid message type value {header.MessageType}");
-                reader.Dispose();
-                return;
-            }
-            var context = new NetworkContext
-            {
-                SystemOwner = m_Owner,
-                SenderId = senderId,
-                Timestamp = timestamp,
-                Header = header,
-                SerializedHeaderSize = serializedHeaderSize,
-                MessageSize = header.MessageSize,
-            };
-
-            var type = m_ReverseTypeMap[header.MessageType];
-            if (!CanReceive(senderId, type, reader, ref context))
-            {
-                reader.Dispose();
-                return;
-            }
-
-            for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
-            {
-                m_Hooks[hookIdx].OnBeforeReceiveMessage(senderId, type, reader.Length + FastBufferWriter.GetWriteSize<MessageHeader>());
-            }
-
-            var handler = m_MessageHandlers[header.MessageType];
             using (reader)
             {
+                if (header.MessageType >= m_HighMessageType)
+                {
+                    Debug.LogWarning($"Received a message with invalid message type value {header.MessageType}");
+                    return;
+                }
+                var context = new NetworkContext
+                {
+                    SystemOwner = m_Owner,
+                    SenderId = senderId,
+                    Timestamp = timestamp,
+                    Header = header,
+                    SerializedHeaderSize = serializedHeaderSize,
+                    MessageSize = header.MessageSize,
+                };
+
+                var type = m_ReverseTypeMap[header.MessageType];
+                if (!CanReceive(senderId, type, reader, ref context))
+                {
+                    return;
+                }
+
+                var handler = m_MessageHandlers[header.MessageType];
+                for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
+                {
+                    m_Hooks[hookIdx].OnBeforeReceiveMessage(senderId, type, reader.Length + FastBufferWriter.GetWriteSize<MessageHeader>());
+                }
+
                 // This will also log an exception is if the server knows about a message type the client doesn't know
                 // about. In this case the handler will be null. It is still an issue the user must deal with: If the
                 // two connecting builds know about different messages, the server should not send a message to a client
@@ -388,10 +434,10 @@ namespace Unity.Netcode
                         Debug.LogException(e);
                     }
                 }
-            }
-            for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
-            {
-                m_Hooks[hookIdx].OnAfterReceiveMessage(senderId, type, reader.Length + FastBufferWriter.GetWriteSize<MessageHeader>());
+                for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
+                {
+                    m_Hooks[hookIdx].OnAfterReceiveMessage(senderId, type, reader.Length + FastBufferWriter.GetWriteSize<MessageHeader>());
+                }
             }
         }
 
@@ -422,16 +468,16 @@ namespace Unity.Netcode
 
         internal void ClientDisconnected(ulong clientId)
         {
-            if (!m_SendQueues.ContainsKey(clientId))
-            {
-                return;
-            }
-            CleanupDisconnectedClient(clientId);
-            m_SendQueues.Remove(clientId);
+            m_DisconnectedClients.Add(clientId);
         }
 
         private void CleanupDisconnectedClient(ulong clientId)
         {
+            if (!m_SendQueues.ContainsKey(clientId))
+            {
+                return;
+            }
+
             var queue = m_SendQueues[clientId];
             for (var i = 0; i < queue.Length; ++i)
             {
@@ -439,23 +485,19 @@ namespace Unity.Netcode
             }
 
             queue.Dispose();
+            m_SendQueues.Remove(clientId);
+
+            m_PerClientMessageVersions.Remove(clientId);
         }
 
         internal void CleanupDisconnectedClients()
         {
-            var removeList = new NativeList<ulong>(Allocator.Temp);
-            foreach (var clientId in m_PerClientMessageVersions.Keys)
+            foreach (var clientId in m_DisconnectedClients)
             {
-                if (!m_SendQueues.ContainsKey(clientId))
-                {
-                    removeList.Add(clientId);
-                }
+                CleanupDisconnectedClient(clientId);
             }
 
-            foreach (var clientId in removeList)
-            {
-                m_PerClientMessageVersions.Remove(clientId);
-            }
+            m_DisconnectedClients.Clear();
         }
 
         public static int CreateMessageAndGetVersion<T>() where T : INetworkMessage, new()
@@ -594,6 +636,10 @@ namespace Unity.Netcode
 
             for (var i = 0; i < clientIds.Count; ++i)
             {
+                if (m_DisconnectedClients.Contains(clientIds[i]))
+                {
+                    continue;
+                }
                 var messageVersion = 0;
                 // Special case because this is the message that carries the version info - thus the version info isn't
                 // populated yet when we get this. The first part of this message always has to be the version data
@@ -650,7 +696,7 @@ namespace Unity.Netcode
 
                 writeQueueItem.Writer.WriteBytes(headerSerializer.GetUnsafePtr(), headerSerializer.Length);
                 writeQueueItem.Writer.WriteBytes(tmpSerializer.GetUnsafePtr(), tmpSerializer.Length);
-                writeQueueItem.BatchHeader.BatchSize++;
+                writeQueueItem.BatchHeader.BatchCount++;
                 for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
                 {
                     m_Hooks[hookIdx].OnAfterSendMessage(clientId, ref message, delivery, tmpSerializer.Length + headerSerializer.Length);
@@ -745,7 +791,15 @@ namespace Unity.Netcode
                 for (var i = 0; i < sendQueueItem.Length; ++i)
                 {
                     ref var queueItem = ref sendQueueItem.ElementAt(i);
-                    if (queueItem.BatchHeader.BatchSize == 0)
+                    // this is checked at every iteration because
+                    // 1) each writer needs to be disposed, so we have to do the full loop regardless, and
+                    // 2) the call to m_MessageSender.Send() may result in calling ClientDisconnected(), so the result of this check may change partway through iteration
+                    if (m_DisconnectedClients.Contains(clientId))
+                    {
+                        queueItem.Writer.Dispose();
+                        continue;
+                    }
+                    if (queueItem.BatchHeader.BatchCount == 0)
                     {
                         queueItem.Writer.Dispose();
                         continue;
@@ -753,15 +807,20 @@ namespace Unity.Netcode
 
                     for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
                     {
-                        m_Hooks[hookIdx].OnBeforeSendBatch(clientId, queueItem.BatchHeader.BatchSize, queueItem.Writer.Length, queueItem.NetworkDelivery);
+                        m_Hooks[hookIdx].OnBeforeSendBatch(clientId, queueItem.BatchHeader.BatchCount, queueItem.Writer.Length, queueItem.NetworkDelivery);
                     }
 
                     queueItem.Writer.Seek(0);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                     // Skipping the Verify and sneaking the write mark in because we know it's fine.
-                    queueItem.Writer.Handle->AllowedWriteMark = 2;
+                    queueItem.Writer.Handle->AllowedWriteMark = sizeof(BatchHeader);
 #endif
+                    queueItem.BatchHeader.BatchHash = XXHash.Hash64(queueItem.Writer.GetUnsafePtr() + sizeof(BatchHeader), queueItem.Writer.Length - sizeof(BatchHeader));
+
+                    queueItem.BatchHeader.BatchSize = queueItem.Writer.Length;
+
                     queueItem.Writer.WriteValue(queueItem.BatchHeader);
+
 
                     try
                     {
@@ -769,7 +828,7 @@ namespace Unity.Netcode
 
                         for (var hookIdx = 0; hookIdx < m_Hooks.Count; ++hookIdx)
                         {
-                            m_Hooks[hookIdx].OnAfterSendBatch(clientId, queueItem.BatchHeader.BatchSize, queueItem.Writer.Length, queueItem.NetworkDelivery);
+                            m_Hooks[hookIdx].OnAfterSendBatch(clientId, queueItem.BatchHeader.BatchCount, queueItem.Writer.Length, queueItem.NetworkDelivery);
                         }
                     }
                     finally

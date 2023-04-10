@@ -450,6 +450,8 @@ namespace Unity.Netcode.Transports.UTP
 
         internal NetworkManager NetworkManager;
 
+        private IRealTimeProvider m_RealTimeProvider;
+
         /// <summary>
         /// SendQueue dictionary is used to batch events instead of sending them immediately.
         /// </summary>
@@ -637,7 +639,7 @@ namespace Unity.Netcode.Transports.UTP
             {
                 Address = ipv4Address,
                 Port = port,
-                ServerListenAddress = listenAddress ?? string.Empty
+                ServerListenAddress = listenAddress ?? ipv4Address
             };
 
             SetProtocol(ProtocolType.UnityTransport);
@@ -763,6 +765,10 @@ namespace Unity.Netcode.Transports.UTP
         // Send as many batched messages from the queue as possible.
         private void SendBatchedMessages(SendTarget sendTarget, BatchedSendQueue queue)
         {
+            if (!m_Driver.IsCreated)
+            {
+                return;
+            }
             new SendBatchedMessagesJob
             {
                 Driver = m_Driver.ToConcurrent(),
@@ -784,7 +790,7 @@ namespace Unity.Netcode.Transports.UTP
             InvokeOnTransportEvent(NetcodeNetworkEvent.Connect,
                 ParseClientId(connection),
                 default,
-                Time.realtimeSinceStartup);
+                m_RealTimeProvider.RealTimeSinceStartup);
 
             return true;
 
@@ -819,7 +825,7 @@ namespace Unity.Netcode.Transports.UTP
                     break;
                 }
 
-                InvokeOnTransportEvent(NetcodeNetworkEvent.Data, clientId, message, Time.realtimeSinceStartup);
+                InvokeOnTransportEvent(NetcodeNetworkEvent.Data, clientId, message, m_RealTimeProvider.RealTimeSinceStartup);
             }
         }
 
@@ -835,7 +841,7 @@ namespace Unity.Netcode.Transports.UTP
                         InvokeOnTransportEvent(NetcodeNetworkEvent.Connect,
                             clientId,
                             default,
-                            Time.realtimeSinceStartup);
+                            m_RealTimeProvider.RealTimeSinceStartup);
 
                         m_State = State.Connected;
                         return true;
@@ -863,7 +869,7 @@ namespace Unity.Netcode.Transports.UTP
                         InvokeOnTransportEvent(NetcodeNetworkEvent.Disconnect,
                             clientId,
                             default,
-                            Time.realtimeSinceStartup);
+                            m_RealTimeProvider.RealTimeSinceStartup);
 
                         return true;
                     }
@@ -893,7 +899,7 @@ namespace Unity.Netcode.Transports.UTP
                     Debug.LogError("Transport failure! Relay allocation needs to be recreated, and NetworkManager restarted. " +
                         "Use NetworkManager.OnTransportFailure to be notified of such events programmatically.");
 
-                    InvokeOnTransportEvent(NetcodeNetworkEvent.TransportFailure, 0, default, Time.realtimeSinceStartup);
+                    InvokeOnTransportEvent(NetcodeNetworkEvent.TransportFailure, 0, default, m_RealTimeProvider.RealTimeSinceStartup);
                     return;
                 }
 
@@ -933,7 +939,7 @@ namespace Unity.Netcode.Transports.UTP
                     {
                         continue;
                     }
-                    var transportClientId = NetworkManager.ClientIdToTransportId(ngoConnectionId);
+                    var transportClientId = NetworkManager.ConnectionManager.ClientIdToTransportId(ngoConnectionId);
                     ExtractNetworkMetricsForClient(transportClientId);
                 }
             }
@@ -1116,7 +1122,7 @@ namespace Unity.Netcode.Transports.UTP
                     InvokeOnTransportEvent(NetcodeNetworkEvent.Disconnect,
                         m_ServerClientId,
                         default,
-                        Time.realtimeSinceStartup);
+                        m_RealTimeProvider.RealTimeSinceStartup);
                 }
             }
         }
@@ -1157,7 +1163,7 @@ namespace Unity.Netcode.Transports.UTP
 
             if (NetworkManager != null)
             {
-                var transportId = NetworkManager.ClientIdToTransportId(clientId);
+                var transportId = NetworkManager.ConnectionManager.ClientIdToTransportId(clientId);
 
                 var rtt = ExtractRtt(ParseClientId(transportId));
                 if (rtt > 0)
@@ -1178,6 +1184,8 @@ namespace Unity.Netcode.Transports.UTP
             Debug.Assert(sizeof(ulong) == UnsafeUtility.SizeOf<NetworkConnection>(), "Netcode connection id size does not match UTP connection id size");
 
             NetworkManager = networkManager;
+
+            m_RealTimeProvider = NetworkManager ? NetworkManager.RealTimeProvider : new RealTimeProvider();
 
             m_NetworkSettings = new NetworkSettings(Allocator.Persistent);
 
@@ -1203,7 +1211,7 @@ namespace Unity.Netcode.Transports.UTP
         /// </summary>
         /// <param name="clientId">The clientId this event is for</param>
         /// <param name="payload">The incoming data payload</param>
-        /// <param name="receiveTime">The time the event was received, as reported by Time.realtimeSinceStartup.</param>
+        /// <param name="receiveTime">The time the event was received, as reported by m_RealTimeProvider.RealTimeSinceStartup.</param>
         /// <returns>Returns the event type</returns>
         public override NetcodeNetworkEvent PollEvent(out ulong clientId, out ArraySegment<byte> payload, out float receiveTime)
         {
@@ -1260,7 +1268,7 @@ namespace Unity.Netcode.Transports.UTP
                     // provide any reliability guarantees anymore. Disconnect the client since at
                     // this point they're bound to become desynchronized.
 
-                    var ngoClientId = NetworkManager?.TransportIdToClientId(clientId) ?? clientId;
+                    var ngoClientId = NetworkManager?.ConnectionManager.TransportIdToClientId(clientId) ?? clientId;
                     Debug.LogError($"Couldn't add payload of size {payload.Count} to reliable send queue. " +
                         $"Closing connection {ngoClientId} as reliability guarantees can't be maintained.");
 
@@ -1276,7 +1284,7 @@ namespace Unity.Netcode.Transports.UTP
                         InvokeOnTransportEvent(NetcodeNetworkEvent.Disconnect,
                             clientId,
                             default(ArraySegment<byte>),
-                            Time.realtimeSinceStartup);
+                            m_RealTimeProvider.RealTimeSinceStartup);
                     }
                 }
                 else
@@ -1424,6 +1432,10 @@ namespace Unity.Netcode.Transports.UTP
         private string m_ClientCaCertificate;
 
         /// <summary>Set the server parameters for encryption.</summary>
+        /// <remarks>
+        /// The public certificate and private key are expected to be in the PEM format, including
+        /// the begin/end markers like <c>-----BEGIN CERTIFICATE-----</c>.
+        /// </remarks>
         /// <param name="serverCertificate">Public certificate for the server (PEM format).</param>
         /// <param name="serverPrivateKey">Private key for the server (PEM format).</param>
         public void SetServerSecrets(string serverCertificate, string serverPrivateKey)
@@ -1434,9 +1446,15 @@ namespace Unity.Netcode.Transports.UTP
 
         /// <summary>Set the client parameters for encryption.</summary>
         /// <remarks>
+        /// <para>
         /// If the CA certificate is not provided, validation will be done against the OS/browser
         /// certificate store. This is what you'd want if using certificates from a known provider.
         /// For self-signed certificates, the CA certificate needs to be provided.
+        /// </para>
+        /// <para>
+        /// The CA certificate (if provided) is expected to be in the PEM format, including the
+        /// begin/end markers like <c>-----BEGIN CERTIFICATE-----</c>.
+        /// </para>
         /// </remarks>
         /// <param name="serverCommonName">Common name of the server (typically hostname).</param>
         /// <param name="caCertificate">CA certificate used to validate the server's authenticity.</param>

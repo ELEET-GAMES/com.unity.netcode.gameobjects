@@ -1,6 +1,6 @@
+using Unity.Netcode.Components;
 using UnityEditor;
 using UnityEngine;
-using Unity.Netcode.Components;
 
 namespace Unity.Netcode.Editor
 {
@@ -23,9 +23,16 @@ namespace Unity.Netcode.Editor
         private SerializedProperty m_RotAngleThresholdProperty;
         private SerializedProperty m_ScaleThresholdProperty;
         private SerializedProperty m_InLocalSpaceProperty;
+
+        private SerializedProperty m_InterpolateProperty;
         private SerializedProperty m_InterpolatePropertyPosition;
         private SerializedProperty m_InterpolatePropertyRotation;
         private SerializedProperty m_InterpolatePropertyScale;
+
+        private SerializedProperty m_UseQuaternionSynchronization;
+        private SerializedProperty m_UseQuaternionCompression;
+        private SerializedProperty m_UseHalfFloatPrecision;
+        private SerializedProperty m_SlerpPosition;
 
         private static int s_ToggleOffset = 45;
         private static float s_MaxRowWidth = EditorGUIUtility.labelWidth + EditorGUIUtility.fieldWidth + 5;
@@ -49,9 +56,14 @@ namespace Unity.Netcode.Editor
             m_RotAngleThresholdProperty = serializedObject.FindProperty(nameof(NetworkTransform.RotAngleThreshold));
             m_ScaleThresholdProperty = serializedObject.FindProperty(nameof(NetworkTransform.ScaleThreshold));
             m_InLocalSpaceProperty = serializedObject.FindProperty(nameof(NetworkTransform.InLocalSpace));
+            m_InterpolateProperty = serializedObject.FindProperty(nameof(NetworkTransform.Interpolate));           
             m_InterpolatePropertyPosition = serializedObject.FindProperty(nameof(NetworkTransform.InterpolatePosition));
             m_InterpolatePropertyRotation = serializedObject.FindProperty(nameof(NetworkTransform.InterpolateRotation));
             m_InterpolatePropertyScale = serializedObject.FindProperty(nameof(NetworkTransform.InterpolateScale));
+            m_UseQuaternionSynchronization = serializedObject.FindProperty(nameof(NetworkTransform.UseQuaternionSynchronization));
+            m_UseQuaternionCompression = serializedObject.FindProperty(nameof(NetworkTransform.UseQuaternionCompression));
+            m_UseHalfFloatPrecision = serializedObject.FindProperty(nameof(NetworkTransform.UseHalfFloatPrecision));
+            m_SlerpPosition = serializedObject.FindProperty(nameof(NetworkTransform.SlerpPosition));
         }
 
         /// <inheritdoc/>
@@ -75,6 +87,8 @@ namespace Unity.Netcode.Editor
 
                 GUILayout.EndHorizontal();
             }
+
+            if (!m_UseQuaternionSynchronization.boolValue)
             {
                 GUILayout.BeginHorizontal();
 
@@ -92,6 +106,13 @@ namespace Unity.Netcode.Editor
 
                 GUILayout.EndHorizontal();
             }
+            else
+            {
+                m_SyncRotationXProperty.boolValue = true;
+                m_SyncRotationYProperty.boolValue = true;
+                m_SyncRotationZProperty.boolValue = true;
+            }
+
             {
                 GUILayout.BeginHorizontal();
 
@@ -118,9 +139,21 @@ namespace Unity.Netcode.Editor
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Configurations", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(m_InLocalSpaceProperty);
+            EditorGUILayout.PropertyField(m_InterpolateProperty);            
             EditorGUILayout.PropertyField(m_InterpolatePropertyPosition);
             EditorGUILayout.PropertyField(m_InterpolatePropertyRotation);
             EditorGUILayout.PropertyField(m_InterpolatePropertyScale);
+            EditorGUILayout.PropertyField(m_SlerpPosition);
+            EditorGUILayout.PropertyField(m_UseQuaternionSynchronization);
+            if (m_UseQuaternionSynchronization.boolValue)
+            {
+                EditorGUILayout.PropertyField(m_UseQuaternionCompression);
+            }
+            else
+            {
+                m_UseQuaternionCompression.boolValue = false;
+            }
+            EditorGUILayout.PropertyField(m_UseHalfFloatPrecision);
 
 #if COM_UNITY_MODULES_PHYSICS
             // if rigidbody is present but network rigidbody is not present

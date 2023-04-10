@@ -2,11 +2,11 @@ using System.Collections;
 using System.Linq;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
+using Unity.Netcode;
+using Unity.Netcode.TestHelpers.Runtime;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
-using Unity.Netcode;
-using Unity.Netcode.TestHelpers.Runtime;
 
 namespace TestProject.RuntimeTests
 {
@@ -36,6 +36,11 @@ namespace TestProject.RuntimeTests
             {
                 m_TestScene = scene;
             }
+        }
+
+        private void InvokeBeforeClientsStart()
+        {
+            m_ServerNetworkManager.SceneManager.ClientSynchronizationMode = LoadSceneMode.Additive;
         }
 
         [UnitySetUp]
@@ -83,7 +88,7 @@ namespace TestProject.RuntimeTests
             }
 
             // Start server and client NetworkManager instances
-            Assert.That(NetcodeIntegrationTestHelpers.Start(true, m_ServerNetworkManager, m_ClientNetworkManagers));
+            Assert.That(NetcodeIntegrationTestHelpers.Start(true, m_ServerNetworkManager, m_ClientNetworkManagers, InvokeBeforeClientsStart));
 
             // Wait for connection on client side
             yield return NetcodeIntegrationTestHelpers.WaitForClientsConnected(m_ClientNetworkManagers);
