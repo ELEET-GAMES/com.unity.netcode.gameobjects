@@ -1821,6 +1821,9 @@ namespace Unity.Netcode.Components
                         if (networkState.HasPositionX) { adjustedPosition.x = networkState.PositionX; }
                         if (networkState.HasPositionY) { adjustedPosition.y = networkState.PositionY; }
                         if (networkState.HasPositionZ) { adjustedPosition.z = networkState.PositionZ; }
+                        if (networkState.HasScaleX) { adjustedScale.x = networkState.ScaleX; }
+                        if (networkState.HasScaleY) { adjustedScale.y = networkState.ScaleY; }
+                        if (networkState.HasScaleZ) { adjustedScale.z = networkState.ScaleZ; }
                     }
                 }
             }
